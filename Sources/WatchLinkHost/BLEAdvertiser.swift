@@ -8,21 +8,25 @@ package final class BLEAdvertiser {
     private nonisolated(unsafe) let serviceUUID: CBUUID
     private nonisolated(unsafe) let ipCharacteristicUUID: CBUUID
     private let delegate: PeripheralDelegate
-    private nonisolated(unsafe) let peripheralManager: CBPeripheralManager
+    // Created lazily in startAdvertising, NOT in init: instantiating a CBPeripheralManager eagerly
+    // spins up CoreBluetooth, which then runs continuous TCC-authorization preflight + XPC + os_log
+    // on the main thread — sustained device heat even when advertising never starts and no central
+    // is present.
+    private var peripheralManager: CBPeripheralManager?
     private var ipCharacteristic: CBMutableCharacteristic?
 
     package nonisolated init(serviceUUID: UUID, ipCharacteristicUUID: UUID) {
         self.serviceUUID = CBUUID(nsuuid: serviceUUID)
         self.ipCharacteristicUUID = CBUUID(nsuuid: ipCharacteristicUUID)
         self.delegate = PeripheralDelegate()
-        self.peripheralManager = CBPeripheralManager(delegate: delegate, queue: nil)
     }
 
     package func startAdvertising(ip: String) {
         let serviceCBUUID = serviceUUID
         let ipCBUUID = ipCharacteristicUUID
         let ipData = Data(ip.utf8)
-        let manager = peripheralManager
+        let manager = peripheralManager ?? CBPeripheralManager(delegate: delegate, queue: nil)
+        peripheralManager = manager
 
         let characteristic = CBMutableCharacteristic(
             type: ipCBUUID,
@@ -54,20 +58,20 @@ package final class BLEAdvertiser {
             )
         }
 
-        if peripheralManager.state == .poweredOn {
+        if manager.state == .poweredOn {
             delegate.onReadyToAdvertise?()
         }
     }
 
     package func stopAdvertising() {
-        peripheralManager.stopAdvertising()
-        peripheralManager.removeAllServices()
+        peripheralManager?.stopAdvertising()
+        peripheralManager?.removeAllServices()
     }
 
     package func updateIP(_ ip: String) {
         guard let characteristic = ipCharacteristic else { return }
         let data = Data(ip.utf8)
-        peripheralManager.updateValue(data, for: characteristic, onSubscribedCentrals: nil)
+        peripheralManager?.updateValue(data, for: characteristic, onSubscribedCentrals: nil)
     }
 }
 
